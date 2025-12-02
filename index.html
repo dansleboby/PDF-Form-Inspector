@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Form Field Inspector</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Import pdf-lib -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- Import fontkit for custom font support if needed (optional but good practice) -->
+    <script src="https://unpkg.com/@pdf-lib/fontkit@0.0.6/dist/fontkit.umd.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen flex flex-col overflow-hidden">
+
+    <!-- Header / Controls -->
+    <div class="bg-white shadow-md p-4 z-10">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-xl font-bold text-slate-800">PDF Form Inspector</h1>
+                <p class="text-sm text-slate-500">Fills Text Fields with names & labels other widgets. PDF not stored fully browser base</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <label class="flex flex-col items-center px-4 py-2 bg-white text-blue-600 rounded-lg shadow-sm border border-blue-600 cursor-pointer hover:bg-blue-50 transition">
+                    <span class="text-sm font-semibold">Select PDF</span>
+                    <input type='file' id="fileInput" class="hidden" accept=".pdf" />
+                </label>
+                
+                <button id="processBtn" disabled class="px-6 py-2 bg-slate-300 text-white font-semibold rounded-lg shadow-sm transition disabled:cursor-not-allowed">
+                    Process PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <!-- Status / Log Sidebar -->
+        <div class="w-full md:w-1/3 lg:w-1/4 bg-white border-r border-slate-200 p-4 overflow-y-auto hidden md:block">
+            <h3 class="font-semibold text-slate-700 mb-2">Field Log</h3>
+            <div id="logArea" class="text-xs font-mono text-slate-600 space-y-1">
+                <p class="italic text-slate-400">Upload a file to see field details...</p>
+            </div>
+        </div>
+
+        <!-- PDF Preview -->
+        <div class="flex-1 bg-slate-500 relative flex justify-center items-center">
+            <div id="emptyState" class="text-white text-center p-8">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <p class="text-lg">No PDF loaded</p>
+            </div>
+            
+            <iframe id="pdfPreview" class="w-full h-full hidden shadow-lg"></iframe>
+            
+            <!-- Loading Overlay -->
+            <div id="loadingOverlay" class="absolute inset-0 bg-black/50 flex flex-col items-center justify-center hidden z-20">
+                <div class="bg-white p-4 rounded-lg shadow-lg flex items-center gap-3">
+                    <div class="loader"></div>
+                    <span class="font-semibold text-slate-700">Processing...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { PDFDocument, rgb, StandardFonts } = PDFLib;
+
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+        const pdfPreview = document.getElementById('pdfPreview');
+        const logArea = document.getElementById('logArea');
+        const emptyState = document.getElementById('emptyState');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+
+        let currentFileArrayBuffer = null;
+
+        // Handle File Selection
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Reset UI
+            logArea.innerHTML = '<p class="text-blue-500">File loaded: ' + file.name + '</p>';
+            processBtn.disabled = false;
+            processBtn.classList.remove('bg-slate-300', 'text-white');
+            processBtn.classList.add('bg-blue-600', 'text-white', 'hover:bg-blue-700');
+            
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                currentFileArrayBuffer = ev.target.result;
+                // Show original immediately
+                showPdfInIframe(currentFileArrayBuffer);
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // Handle Processing
+        processBtn.addEventListener('click', async () => {
+            if (!currentFileArrayBuffer) return;
+            
+            loadingOverlay.classList.remove('hidden');
+            
+            try {
+                const modifiedPdfBytes = await modifyPdf(currentFileArrayBuffer);
+                showPdfInIframe(modifiedPdfBytes);
+                logArea.innerHTML += `<p class="text-green-600 font-bold mt-2">✓ Processing Complete</p>`;
+            } catch (err) {
+                console.error(err);
+                alert("Error processing PDF: " + err.message);
+                logArea.innerHTML += `<p class="text-red-600 font-bold mt-2">Error: ${err.message}</p>`;
+            } finally {
+                loadingOverlay.classList.add('hidden');
+            }
+        });
+
+        function showPdfInIframe(bytes) {
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            pdfPreview.src = url;
+            pdfPreview.classList.remove('hidden');
+            emptyState.classList.add('hidden');
+        }
+
+        async function modifyPdf(existingPdfBytes) {
+            // Load the PDF
+            const pdfDoc = await PDFDocument.load(existingPdfBytes);
+            
+            // Get the form
+            const form = pdfDoc.getForm();
+            const fields = form.getFields();
+
+            // Embed font for drawing labels
+            const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+            const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+            let logHtml = `<p class="border-b pb-1 mb-2 font-bold">Found ${fields.length} Fields:</p>`;
+
+            // --- PASS 1: FILL TEXT FIELDS ---
+            fields.forEach(field => {
+                const name = field.getName();
+                const type = field.constructor.name;
+                
+                logHtml += `<div class="mb-1"><span class="text-slate-500">[${type}]</span> <span class="text-slate-800 font-medium">${name}</span></div>`;
+
+                if (type === 'PDFTextField') {
+                    try {
+                        // Set the value to the name of the field
+                        field.setText(name);
+                        // Make sure it's visible (sometimes fields are hidden)
+                        field.defaultUpdateAppearances(helvetica);
+                    } catch (e) {
+                        console.warn(`Could not set text for ${name}`, e);
+                    }
+                }
+            });
+
+            // --- PASS 2: DRAW LABELS FOR NON-TEXT FIELDS ---
+            // Because PDF coordinates are complex (widgets vs fields), 
+            // we iterate through pages to find the visual representations (Widgets)
+            
+            const pages = pdfDoc.getPages();
+            
+            // Map of Field Refs to Field Names for quick lookup
+            // We need to look up names by the raw reference object
+            const fieldMap = new Map();
+            fields.forEach(f => {
+                fieldMap.set(f.ref, f.getName());
+            });
+
+            pages.forEach((page, pageIndex) => {
+                const { width, height } = page.getSize();
+                
+                // Get all annotations on this page
+                // We access the low-level PDF objects here
+                const annotations = page.node.Annots();
+                
+                if (!annotations) return;
+
+                annotations.asArray().forEach(annotRef => {
+                    // Dereference the annotation
+                    const annot = pdfDoc.context.lookup(annotRef);
+                    if (!annot) return;
+
+                    // Check if it is a Widget (form element)
+                    const subtype = annot.get(PDFLib.PDFName.of('Subtype'));
+                    if (subtype !== PDFLib.PDFName.of('Widget')) return;
+
+                    // Try to find the associated field Name
+                    let fieldName = null;
+                    let isTextField = false;
+
+                    // 1. Check if the widget *is* the field (merged dictionary)
+                    if (annot.has(PDFLib.PDFName.of('T'))) {
+                        fieldName = annot.get(PDFLib.PDFName.of('T')).toString(); // returns "(FieldName)"
+                        // Remove parens from PDF string format
+                        if(fieldName.startsWith('(') && fieldName.endsWith(')')) {
+                            fieldName = fieldName.slice(1, -1);
+                        }
+                    } 
+                    // 2. Check Parent (common structure)
+                    else if (annot.has(PDFLib.PDFName.of('Parent'))) {
+                        const parentRef = annot.get(PDFLib.PDFName.of('Parent'));
+                        // Iterate our high-level fields to match the reference
+                        // This is inefficient O(N^2) but fine for standard PDFs
+                        for(const f of fields) {
+                            if (f.ref === parentRef) {
+                                fieldName = f.getName();
+                                if (f.constructor.name === 'PDFTextField') isTextField = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Only draw label if we found a name
+                    // Logic: If it's NOT a text field, definitely draw label.
+                    // If it IS a text field, we already filled it, so we might skip drawing the label 
+                    // to avoid clutter, unless the text box is tiny. Let's skip drawing for TextFields 
+                    // since we filled them inside.
+                    if (fieldName && !isTextField) {
+                        const rectArr = annot.get(PDFLib.PDFName.of('Rect'));
+                        if (rectArr) {
+                            const rect = rectArr.asArray(); // [x, y, x2, y2]
+                            const x = rect[0].asNumber();
+                            const y = rect[1].asNumber();
+                            const w = rect[2].asNumber() - x;
+                            const h = rect[3].asNumber() - y;
+
+                            // Draw the Name in Red
+                            page.drawText(fieldName, {
+                                x: x,
+                                y: y + h + 2, // Draw slightly above the field
+                                size: 9,
+                                font: helveticaBold,
+                                color: rgb(1, 0, 0),
+                                lineHeight: 10,
+                            });
+                            
+                            // Draw a bounding box for clarity
+                            page.drawRectangle({
+                                x: x,
+                                y: y,
+                                width: w,
+                                height: h,
+                                borderColor: rgb(1, 0, 0),
+                                borderWidth: 1,
+                                opacity: 0.5,
+                            });
+                        }
+                    }
+                });
+            });
+
+            logArea.innerHTML += logHtml;
+            return await pdfDoc.save();
+        }
+    </script>
+</body>
+</html>
