@@ -240,14 +240,16 @@
                             const w = rect[2].asNumber() - x;
                             const h = rect[3].asNumber() - y;
 
-                            // Draw the Name in Red
+                            // Draw the Name in Red INSIDE the box
+                            const fontSize = 8;
                             page.drawText(fieldName, {
-                                x: x,
-                                y: y + h + 2, // Draw slightly above the field
-                                size: 9,
+                                x: x + 2, // Padding from left
+                                y: y + (h / 2) - (fontSize / 2) - 1, // Vertically centered
+                                size: fontSize,
                                 font: helveticaBold,
                                 color: rgb(1, 0, 0),
                                 lineHeight: 10,
+                                opacity: 0.8
                             });
                             
                             // Draw a bounding box for clarity
